@@ -33,6 +33,8 @@ const Timer: React.FC = () => {
   
   const audioRef = useRef<HTMLAudioElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTickRef = useRef<number>(Date.now());
+  const expectedTimeLeftRef = useRef<number | null>(null);
 
   // Update timeLeft when active time settings change or mode changes
   useEffect(() => {
@@ -45,21 +47,73 @@ const Timer: React.FC = () => {
 
   // Timer logic
   useEffect(() => {
+    console.log("Timer is running", isRunning, timeLeft);
     if (isRunning && timeLeft > 0) {
-      timerRef.current = setTimeout(() => {
-        setTimeLeft(prev => prev - 1);
-      }, 1000);
+      console.log("Timer is running111", timeLeft, expectedTimeLeftRef.current);
+      // Store the expected time left when we start/resume the timer
+      if (expectedTimeLeftRef.current === null) {
+        expectedTimeLeftRef.current = timeLeft;
+      }
+      
+      // Record the current time
+      lastTickRef.current = Date.now();
+      
+      timerRef.current = setInterval(() => {
+        // Calculate how much time has actually passed
+        const now = Date.now();
+        const elapsed = (now - lastTickRef.current) / 1000;
+        lastTickRef.current = now;
+        
+        // Update expected time with accurate elapsed time
+        if (expectedTimeLeftRef.current !== null) {
+          expectedTimeLeftRef.current -= elapsed;
+          
+          // Sync actual time with expected time (with a minimum of 0)
+          const newTimeLeft = Math.max(0, Math.round(expectedTimeLeftRef.current));
+          console.log("New time left", newTimeLeft);
+          setTimeLeft(newTimeLeft);
+          
+          // Check if timer should complete
+          if (newTimeLeft <= 0) {
+            setIsRunning(false);
+            expectedTimeLeftRef.current = null;
+            handleTimerComplete();
+          }
+        }
+      }, 100); // Run more frequently for more accurate timing
     } else if (timeLeft === 0 && isRunning) {
       setIsRunning(false);
+      expectedTimeLeftRef.current = null;
       handleTimerComplete();
+    } else if (!isRunning) {
+      // Reset expected time when paused
+      expectedTimeLeftRef.current = null;
     }
 
     return () => {
       if (timerRef.current) {
-        clearTimeout(timerRef.current);
+        console.log("Clearing timer");
+        clearInterval(timerRef.current);
       }
     };
   }, [isRunning, timeLeft]);
+
+  // Add this visibility change effect after the timer logic useEffect
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isRunning && expectedTimeLeftRef.current !== null) {
+        // When tab becomes visible again, sync the display time with the actual expected time
+        const newTimeLeft = Math.max(0, Math.round(expectedTimeLeftRef.current));
+        setTimeLeft(newTimeLeft);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isRunning]);
 
   const handleTimerComplete = () => {
     // Show alert
@@ -67,7 +121,9 @@ const Timer: React.FC = () => {
     
     // Play sound
     if (audioRef.current) {
-      audioRef.current.play();
+      audioRef.current.play().catch(err => {
+        console.error("Failed to play sound:", err);
+      });
     }
     
     // Focus app window
